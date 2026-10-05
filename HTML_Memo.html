@@ -410,6 +410,31 @@
       toast._t = setTimeout(() => toast.classList.remove('show'), 2200);
     }
 
+    /* =========================================================
+       ★ 기본 파일 이름 생성: 제목_YYYYMMDD_HHMMSS.html
+         예) Memo_20261020_231156.html
+       ========================================================= */
+    function makeDefaultFilename() {
+      const current = fileNameDisplay.innerText;
+      let title = 'Memo';
+
+      if (current && current !== '새 문서') {
+        // 1) 확장자 제거
+        title = current.replace(/\.[^.]+$/, '');
+        // 2) 이미 _YYYYMMDD_HHMMSS 형태가 붙어 있으면 제거 (중복 방지)
+        title = title.replace(/_\d{8}_\d{6}$/, '');
+        // 3) 파일명에 못 쓰는 문자 정리
+        title = title.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Memo';
+      }
+
+      const now = new Date();
+      const pad = n => String(n).padStart(2, '0');
+      const ymd = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const hms = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+      return `${title}_${ymd}_${hms}.html`;
+    }
+
     function setFileNameDisplay(name) {
       if (name) {
         fileNameDisplay.innerText = name;
@@ -1136,7 +1161,7 @@
     }, true);
 
     /* =========================================================
-       ★ 파일 열기 — FileSystemFileHandle 확보 (경로 기억)
+       파일 열기
     ========================================================= */
     async function openFile() {
       if ('showOpenFilePicker' in window) {
@@ -1191,13 +1216,10 @@
     }
 
     /* =========================================================
-       ★ 드래그 앤 드롭
-         - getAsFileSystemHandle() 로 파일 핸들 확보 → 원본 폴더 기억
-         - 지원하지 않는 브라우저에서는 File API 로 폴백
+       드래그 앤 드롭 (파일 핸들 확보 → 원본 폴더 기억)
     ========================================================= */
     async function processDroppedFile(file, fsHandle) {
       if (fsHandle && fsHandle.kind === 'file') {
-        // 파일열기 버튼으로 연 것과 동일하게 핸들 저장
         fileHandle = fsHandle;
         lastSaveDirHandle = fsHandle;
         try {
@@ -1209,8 +1231,6 @@
           console.warn('[HTML Memo] 파일 핸들 읽기 실패, File API 로 대체:', err);
         }
       }
-
-      // 폴백: 경로 정보 없이 파일 내용만 읽음
       fileHandle = null;
       lastSaveDirHandle = null;
       const reader = new FileReader();
@@ -1218,7 +1238,6 @@
       reader.readAsText(file);
     }
 
-    // dragenter / dragover: 오버레이 표시
     ['dragenter', 'dragover'].forEach(eventName => {
       window.addEventListener(eventName, (e) => {
         const hasFiles = e.dataTransfer && e.dataTransfer.types &&
@@ -1234,14 +1253,12 @@
       }, false);
     });
 
-    // overlay: dragleave 시 숨김만 담당 (drop 처리는 window 에서)
     dropOverlay.addEventListener('dragleave', (e) => {
       e.preventDefault();
       e.stopPropagation();
       dropOverlay.classList.remove('active');
     }, false);
 
-    // window: 실제 drop 처리
     window.addEventListener('drop', async (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -1250,31 +1267,24 @@
       const dt = e.dataTransfer;
       if (!dt) return;
 
-      // ★ 중요: DataTransferItem 은 drop 이벤트 핸들러가 끝나면 무효화되므로
-      //   getAsFileSystemHandle() 을 "동기적으로" 호출해서 프로미스를 모아둔다.
+      // getAsFileSystemHandle() 는 drop 핸들러가 끝나면 무효화되므로 동기 호출로 프로미스 수집
       const itemPromises = [];
       const items = dt.items ? Array.from(dt.items) : [];
       for (const item of items) {
         if (item.kind !== 'file') continue;
         if (typeof item.getAsFileSystemHandle === 'function') {
-          try {
-            // 동기 호출 → 프로미스 저장
-            itemPromises.push(item.getAsFileSystemHandle());
-          } catch (err) {
-            itemPromises.push(null);
-          }
+          try { itemPromises.push(item.getAsFileSystemHandle()); }
+          catch (err) { itemPromises.push(null); }
         } else {
           itemPromises.push(null);
         }
       }
 
-      // File 폴백 (path 정보 없음)
       const fallbackFiles = dt.files ? Array.from(dt.files) : [];
 
       let fsHandle = null;
       let file = null;
 
-      // 1순위: FileSystemFileHandle
       for (let i = 0; i < itemPromises.length; i++) {
         if (!itemPromises[i]) continue;
         try {
@@ -1289,9 +1299,7 @@
         }
       }
 
-      // 2순위: File API
       if (!file && fallbackFiles.length) file = fallbackFiles[0];
-
       if (!file) return;
       await processDroppedFile(file, fsHandle);
     }, false);
@@ -1374,12 +1382,12 @@ ${tempDiv.innerHTML}
       saveFileAs();
     }
 
+    /* =========================================================
+       ★ 다른 이름으로 저장 (파일명: 제목_YYYYMMDD_HHMMSS.html)
+    ========================================================= */
     async function saveFileAs() {
       const fullDoc = generateFullHTMLDocument();
-      const current = fileNameDisplay.innerText;
-      const defaultName = (current && current !== '새 문서')
-        ? current
-        : `Note_${new Date().toISOString().slice(0, 10)}.html`;
+      const defaultName = makeDefaultFilename();
 
       if (!('showSaveFilePicker' in window)) {
         const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
@@ -1398,7 +1406,6 @@ ${tempDiv.innerHTML}
       const types = [{ description: 'HTML File', accept: { 'text/html': ['.html'] } }];
       const baseOpts = { suggestedName: defaultName, types, id: PICKER_ID };
 
-      // startIn 에 원본 파일 핸들 전달 → 원본이 있던 폴더가 기본 경로
       const startInHandle = (fileHandle && fileHandle.kind === 'file')
         ? fileHandle
         : ((lastSaveDirHandle && lastSaveDirHandle.kind === 'file') ? lastSaveDirHandle : null);
