@@ -385,6 +385,12 @@
     const HANDLE_DIRS = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
     const PICKER_ID = 'html-memo-doc';
 
+    // ★ File System Access API 지원 여부
+    const HAS_FS_ACCESS =
+      typeof window !== 'undefined' &&
+      typeof window.showOpenFilePicker === 'function' &&
+      typeof window.showSaveFilePicker === 'function';
+
     let isCodeMode = false;
     let selectedImgWrapper = null;
     let autoSaveTimer = null;
@@ -403,27 +409,33 @@
     /* =========================================================
        공통 유틸
     ========================================================= */
-    function showToast(message) {
+    function showToast(message, duration = 2200) {
       toast.innerText = message;
       toast.classList.add('show');
       clearTimeout(toast._t);
-      toast._t = setTimeout(() => toast.classList.remove('show'), 2200);
+      toast._t = setTimeout(() => toast.classList.remove('show'), duration);
     }
 
-    /* =========================================================
-       ★ 기본 파일 이름 생성: 제목_YYYYMMDD_HHMMSS.html
-         예) Memo_20261020_231156.html
-       ========================================================= */
+    /* ★ 브라우저 감지 */
+    function getBrowserInfo() {
+      const ua = navigator.userAgent || '';
+      const platform = navigator.platform || '';
+      const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(ua);
+      const isChrome = /Chrome|CriOS/.test(ua) && !/Edg|OPR/.test(ua);
+      const isEdge = /Edg/.test(ua);
+      const isFirefox = /Firefox|FxiOS/.test(ua);
+      const isMac = /Mac|iPhone|iPod|iPad/i.test(platform) || /Mac OS X/i.test(ua);
+      return { isSafari, isChrome, isEdge, isFirefox, isMac };
+    }
+
+    /* ★ 기본 파일 이름: 제목_YYYYMMDD_HHMMSS.html */
     function makeDefaultFilename() {
       const current = fileNameDisplay.innerText;
       let title = 'Memo';
 
       if (current && current !== '새 문서') {
-        // 1) 확장자 제거
         title = current.replace(/\.[^.]+$/, '');
-        // 2) 이미 _YYYYMMDD_HHMMSS 형태가 붙어 있으면 제거 (중복 방지)
         title = title.replace(/_\d{8}_\d{6}$/, '');
-        // 3) 파일명에 못 쓰는 문자 정리
         title = title.replace(/[\\/:*?"<>|]/g, '_').trim() || 'Memo';
       }
 
@@ -504,7 +516,7 @@
     }
 
     /* =========================================================
-       서식 지우기 (텍스트 유지, 목록 마커까지 제거)
+       서식 지우기
     ========================================================= */
     function collectSelectedListItems(range) {
       const result = new Set();
@@ -1157,6 +1169,10 @@
       } else if (k === 'v' && selectedImgWrapper && imageClipboard) {
         e.preventDefault(); e.stopPropagation();
         pasteInternalImage();
+      } else if (k === 's') {
+        // ★ Ctrl/Cmd+S 도 저장
+        e.preventDefault();
+        saveFile();
       }
     }, true);
 
@@ -1164,7 +1180,7 @@
        파일 열기
     ========================================================= */
     async function openFile() {
-      if ('showOpenFilePicker' in window) {
+      if (HAS_FS_ACCESS) {
         try {
           const [handle] = await window.showOpenFilePicker({
             id: PICKER_ID,
@@ -1181,6 +1197,7 @@
           applyLoadedContent(text, file.name);
         } catch (err) { /* 사용자 취소 */ }
       } else {
+        // Safari / Firefox → input[type=file] 폴백
         document.getElementById('file-input').click();
       }
     }
@@ -1216,7 +1233,7 @@
     }
 
     /* =========================================================
-       드래그 앤 드롭 (파일 핸들 확보 → 원본 폴더 기억)
+       드래그 앤 드롭
     ========================================================= */
     async function processDroppedFile(file, fsHandle) {
       if (fsHandle && fsHandle.kind === 'file') {
@@ -1267,7 +1284,6 @@
       const dt = e.dataTransfer;
       if (!dt) return;
 
-      // getAsFileSystemHandle() 는 drop 핸들러가 끝나면 무효화되므로 동기 호출로 프로미스 수집
       const itemPromises = [];
       const items = dt.items ? Array.from(dt.items) : [];
       for (const item of items) {
@@ -1366,7 +1382,27 @@ ${tempDiv.innerHTML}
 </html>`;
     }
 
+    /* ★ 다운로드 폴백 (Safari / Firefox) */
+    function downloadAsFile(fullDoc, filename) {
+      const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    }
+
     async function saveFile() {
+      // ★ FSA 미지원 (Safari/Firefox) → 바로 폴백 저장
+      if (!HAS_FS_ACCESS) {
+        return await saveFileAs();
+      }
+
+      // ★ 원본 핸들이 있으면 덮어쓰기
       if (fileHandle) {
         try {
           const writable = await fileHandle.createWritable();
@@ -1382,27 +1418,31 @@ ${tempDiv.innerHTML}
       saveFileAs();
     }
 
-    /* =========================================================
-       ★ 다른 이름으로 저장 (파일명: 제목_YYYYMMDD_HHMMSS.html)
-    ========================================================= */
     async function saveFileAs() {
       const fullDoc = generateFullHTMLDocument();
       const defaultName = makeDefaultFilename();
 
-      if (!('showSaveFilePicker' in window)) {
-        const blob = new Blob([fullDoc], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = defaultName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToast('💾 다운로드 폴더에 저장되었습니다.');
+      /* ──────────────────────────────────────────────
+         [폴백] Safari / Firefox → 다운로드 폴더로 저장
+         ────────────────────────────────────────────── */
+      if (!HAS_FS_ACCESS) {
+        const { isSafari, isMac, isFirefox } = getBrowserInfo();
+        let msg = '💾 다운로드 폴더에 저장되었습니다.';
+        if (isSafari || isFirefox) {
+          msg = isMac
+            ? '💾 저장됨(다운로드 폴더). 폴더 선택 저장은 Chrome/Edge에서 가능합니다.'
+            : '💾 저장됨(다운로드 폴더). 폴더 선택 저장은 Chrome/Edge에서 가능합니다.';
+        }
+        downloadAsFile(fullDoc, defaultName);
+        showToast(msg, 3500);
+        setFileNameDisplay(defaultName);
+        setSaveStatus('다운로드됨', true);
         return;
       }
 
+      /* ──────────────────────────────────────────────
+         [정상] Chrome / Edge → showSaveFilePicker
+         ────────────────────────────────────────────── */
       const types = [{ description: 'HTML File', accept: { 'text/html': ['.html'] } }];
       const baseOpts = { suggestedName: defaultName, types, id: PICKER_ID };
 
@@ -1429,8 +1469,12 @@ ${tempDiv.innerHTML}
           handle = await window.showSaveFilePicker(baseOpts);
         } catch (err) {
           if (err && err.name === 'AbortError') return;
-          console.error('[HTML Memo] 저장 다이얼로그 실패:', err);
-          showToast('⚠️ 저장 창을 열 수 없습니다.');
+          // FSA API 가 있는데도 실패한 경우 → 다운로드 폴백
+          console.warn('[HTML Memo] showSaveFilePicker 실패, 다운로드로 폴백:', err);
+          downloadAsFile(fullDoc, defaultName);
+          showToast('💾 다운로드 폴더에 저장되었습니다.', 3000);
+          setFileNameDisplay(defaultName);
+          setSaveStatus('다운로드됨', true);
           return;
         }
       }
@@ -1484,12 +1528,24 @@ ${tempDiv.innerHTML}
     window.addEventListener('resize', () => { if (cropCtx) cropCtx.cancel(); });
 
     window.onload = () => {
+      // 시작 시 브라우저 정보를 한 번 로그로 남겨 디버깅에 도움
+      const info = getBrowserInfo();
+      console.log('[HTML Memo] 브라우저 감지:', info, '| FSA 지원:', HAS_FS_ACCESS);
+
       const savedDraft = localStorage.getItem('quick_notepad_draft');
       if (savedDraft) {
         editor.innerHTML = savedDraft;
         attachImageControls();
         updateStats();
         setSaveStatus('임시 저장본 로드됨', true);
+      }
+
+      // Safari/Firefox 사용자에게 안내 (최초 방문 시 1회만)
+      if (!HAS_FS_ACCESS && !localStorage.getItem('html_memo_fsa_notice')) {
+        setTimeout(() => {
+          showToast('💡 Safari/Firefox는 다운로드 폴더로 저장됩니다. Chrome/Edge에서 폴더 선택 저장이 가능합니다.', 5000);
+          localStorage.setItem('html_memo_fsa_notice', '1');
+        }, 800);
       }
     };
   </script>
