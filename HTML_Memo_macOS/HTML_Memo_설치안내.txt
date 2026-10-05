@@ -1,0 +1,11 @@
+HTML Memo — macOS 설치 안내
+
+1. HTML_Memo.app을 응용 프로그램(Applications) 폴더로 드래그합니다.
+2. 처음 실행할 때 macOS가 경고하면 앱을 우클릭 → 열기를 선택합니다.
+3. Google Chrome / Microsoft Edge / Brave / Chromium이 설치되어 있으면 별도 앱 창으로 실행합니다.
+4. 해당 브라우저가 없으면 기본 브라우저에서 HTML Memo.html을 엽니다.
+5. HTML Memo 자체의 파일 열기/저장 기능은 Chrome/Edge 등 Chromium 계열에서 가장 완전하게 동작합니다.
+
+중요:
+- 현재 버전은 기존 HTML Memo 기능을 그대로 보존하는 'macOS 앱 런처'입니다.
+- 문서 내용과 이미지는 HTML 파일 하나에 저장됩니다.
